@@ -2,22 +2,15 @@
 
 set -eu
 
-FFMPEG=$(command -v ffmpeg)
-BC=$(command -v bc)
-DIR=${1:-.}
-FILENAME=$(find "$1" -name "*.m4a" | sort | head -n 1)
-FILENAME_ORIG="$FILENAME.orig"
+export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+FFMPEG="ffmpeg"
+BC="bc"
 
-LENGTH=900
+RAW_FILE="$1"
+OUTPUT_FILE="$2"
+LENGTH="${3:-900}"
 
-if [[ -e $FILENAME && -e $FILENAME_ORIG ]]; then
-  rm "$FILENAME"
-  mv "$FILENAME_ORIG" "$FILENAME"
-fi
-
-echo "Processing $FILENAME ..."
-
-GAP_POSES=$($FFMPEG -i "$FILENAME" -af silencedetect=noise=-60dB:2.0 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_start:" | sed -e "s/.*: *//")
+GAP_POSES=$($FFMPEG -i "$RAW_FILE" -af silencedetect=noise=-60dB:2.0 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_start:" | sed -e "s/.*: *//")
 
 echo "Gaps are detected:"
 echo "$GAP_POSES"
@@ -33,6 +26,9 @@ for pos in ${GAP_POSES[@]}; do
     fi
 done
 
+
+mkdir -p "$(dirname $OUTPUT_FILE)"
+
 if [[ ! -z $START_POS && ! -z $END_POS ]]; then
     START_POS="$(echo "$START_POS + 1.0" | $BC)"
     END_POS="$(echo "$END_POS + 1.0" | $BC)"
@@ -40,6 +36,5 @@ if [[ ! -z $START_POS && ! -z $END_POS ]]; then
     echo "EXTRACT START_POS: $START_POS"
     echo "EXTRACT END_POS: $END_POS"
     echo "EXTRACT EXTRACTING_LENGTH: $EXTRACTING_LENGTH"
-    mv "$FILENAME" "$FILENAME_ORIG"
-    $FFMPEG -ss "$START_POS" -t "$EXTRACTING_LENGTH" -i "$FILENAME_ORIG" -c copy "$FILENAME"
+    $FFMPEG -ss "$START_POS" -t "$EXTRACTING_LENGTH" -i "$RAW_FILE" -c copy "$OUTPUT_FILE"
 fi
