@@ -26,20 +26,22 @@
 set -eu
 
 FFMPEG="/home/linuxbrew/.linuxbrew/bin/ffmpeg"
+BC="/home/linuxbrew/.linuxbrew/bin/bc"
 
 DATE=$(date "+%Y%m%d")
 URL="https://nhkradioakr2-i.akamaihd.net/hls/live/511929/1-r2/1-r2-01.m3u8"
 BASE_DIR="/home/kayhide/mainichi"
+
 PROG="$1"
 LENGTH="${2:-900}"
+RECORDING_LENGTH=$(("$LENGTH" + 120))
 
 DIR="$BASE_DIR/$PROG"
 FILENAME="$DIR/$DATE.m4a"
 FILENAME_ORIG="$FILENAME.orig"
 
-mkdir -p "$DIR"
 
-RECORDING_LENGTH=$(("$LENGTH" + 120))
+mkdir -p "$DIR"
 
 echo "==== Recording $PROG $DATE ===="
 echo "$FFMPEG -i $URL -to $LENGTH -c copy $FILENAME"
@@ -47,28 +49,35 @@ echo
 
 $FFMPEG -i $URL -to $RECORDING_LENGTH -c copy "$FILENAME"
 
+
 echo "==== Extracting $PROG $DATE ===="
 
-
 GAP_POSES=$($FFMPEG -i "$FILENAME" -af silencedetect=noise=-60dB:2.0 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_start:" | sed -e "s/.*: *//")
-START_POS=$(echo "$GAP_POSES" | head -n 1)
-START_POS="$(echo "$START_POS + 1.0" | bc)"
 
-for pos in "${GAP_POSES[@]}"; do
-    echo "$pos"
-    if (( $(echo "$START_POS + $LENGTH < $pos" | bc) )); then
+echo "Gaps are detected:"
+echo "$GAP_POSES"
+echo
+
+START_POS=$(echo "$GAP_POSES" | head -n 1)
+END_POS=""
+
+for pos in ${GAP_POSES[@]}; do
+    if (( $(echo "$START_POS + $LENGTH - 1 < $pos" | $BC) )); then
         END_POS=$pos
         break
     fi
 done
 
-END_POS="$(echo "$END_POS + 1.0" | bc)"
 if [[ ! -z $START_POS && ! -z $END_POS ]]; then
-    EXTRACTING_LENGTH=$(echo "$END_POS - $START_POS" | bc)
+    START_POS="$(echo "$START_POS + 1.0" | $BC)"
+    END_POS="$(echo "$END_POS + 1.0" | $BC)"
+    EXTRACTING_LENGTH=$(echo "$END_POS - $START_POS" | $BC)
+    echo "EXTRACT START_POS: $START_POS"
+    echo "EXTRACT END_POS: $END_POS"
+    echo "EXTRACT EXTRACTING_LENGTH: $EXTRACTING_LENGTH"
     mv "$FILENAME" "$FILENAME_ORIG"
     $FFMPEG -ss "$START_POS" -t "$EXTRACTING_LENGTH" -i "$FILENAME_ORIG" -c copy "$FILENAME"
 fi
-
 
 echo "==== Finished $PROG $DATE ===="
 echo
