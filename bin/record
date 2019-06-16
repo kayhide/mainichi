@@ -14,14 +14,12 @@
 # 再放送：翌週 木・金曜日　午前11:00～11:15
 
 # crontab -e
-# 29  7   * * 1-3 $BASE_DIR/bin/record Fr1
-# 29  7   * * 4-5 $BASE_DIR/bin/record Fr2
-
-# 29  14  * * 1-3 $BASE_DIR/bin/record Fr1-2
-# 29  14  * * 4-5 $BASE_DIR/bin/record Fr2-2
-
-# 59  10  * * 1-3 $BASE_DIR/bin/record Fr1-3
-# 59  10  * * 4-5 $BASE_DIR/bin/record Fr2-3
+# 29  7   * * 1-3 $BASE_DIR/bin/record Fr
+# 29  14  * * 1-3 $BASE_DIR/bin/record Fr
+# 59  10  * * 1-3 $BASE_DIR/bin/record Fr
+# 29  7   * * 4-5 $BASE_DIR/bin/record Fr
+# 29  14  * * 4-5 $BASE_DIR/bin/record Fr
+# 59  10  * * 4-5 $BASE_DIR/bin/record Fr
 
 set -eu
 
@@ -36,27 +34,36 @@ URL="https://nhkradioakr2-i.akamaihd.net/hls/live/511929/1-r2/1-r2-01.m3u8"
 
 PROG="$1"
 LENGTH="${2:-900}"
+OFFSET=45
 RECORDING_LENGTH=$(("$LENGTH" + 120))
 
-RAW_DIR="$BASE_DIR/raw/$PROG"
-RAW_FILE="$RAW_DIR/$DATE-$TIME.m4a"
+RAW_DIR="$BASE_DIR/raw"
+RAW_FILE="$RAW_DIR/$DATE/$TIME.m4a"
+
+SRC_DIR="$BASE_DIR/src/$PROG"
+SRC_FILE="$SRC_DIR/$DATE-$TIME"
 
 OUTPUT_DIR="$BASE_DIR/output/$PROG"
-OUTPUT_FILE="$OUTPUT_DIR/$(basename $RAW_FILE)"
+OUTPUT_FILE="$OUTPUT_DIR/$DATE-$TIME.m4a"
 
 
 echo "==== Recording $PROG $DATE ===="
 echo "$FFMPEG -i $URL -to $LENGTH -c copy $RAW_FILE"
 echo
 
-mkdir -p "$RAW_DIR"
+mkdir -p "$(dirname $RAW_FILE)"
 $FFMPEG -i $URL -to $RECORDING_LENGTH -c copy "$RAW_FILE"
 
+mkdir -p "$(dirname $SRC_FILE)"
+cat <<EOF > "$SRC_FILE"
+$LENGTH
+$OFFSET
+EOF
 
 echo "==== Extracting $PROG $DATE ===="
 echo
 
-$BASE_DIR/bin/extract "$RAW_FILE" "$OUTPUT_FILE" "$LENGTH"
+$BASE_DIR/bin/extract "$RAW_FILE" "$OUTPUT_FILE" "$LENGTH" "$OFFSET"
 
 
 echo "==== Finished $PROG $DATE ===="

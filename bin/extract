@@ -9,17 +9,41 @@ BC="bc"
 RAW_FILE="$1"
 OUTPUT_FILE="$2"
 LENGTH="${3:-900}"
+OFFSET="${4:-45}"
 
-GAP_POSES=$($FFMPEG -i "$RAW_FILE" -af silencedetect=noise=-60dB:2.0 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_start:" | sed -e "s/.*: *//")
+mkdir -p tmp
+GAPS_FILE=$(mktemp "tmp/${0##*/}-gaps.XXXX")
+function finish {
+    if [[ -e "$GAPS_FILE" ]]; then
+        echo "Deleting $GAPS_FILE"
+        rm -f "$GAPS_FILE"
+    fi
+}
+trap finish EXIT
+
+$FFMPEG -i "$RAW_FILE" -af silencedetect=noise=-60dB:2.0 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_" > "$GAPS_FILE"
+GAP_STARTS=$(cat "$GAPS_FILE" | grep "silence_start:" | sed -e "s/.*: *//")
+GAP_ENDS=$(cat "$GAPS_FILE" | grep "silence_end:" | sed -e "s/ *|.*//" | sed -e "s/.*: *//")
 
 echo "Gaps are detected:"
-echo "$GAP_POSES"
+echo "starts:"
+echo "$GAP_STARTS"
+echo
+echo "ends:"
+echo "$GAP_ENDS"
 echo
 
-START_POS=$(echo "$GAP_POSES" | head -n 1)
+START_POS=""
 END_POS=""
 
-for pos in ${GAP_POSES[@]}; do
+for pos in ${GAP_ENDS[@]}; do
+    if (( $(echo "$OFFSET < $pos" | $BC) )); then
+        START_POS=$pos
+        break
+    fi
+done
+
+for pos in ${GAP_STARTS[@]}; do
     if (( $(echo "$START_POS + $LENGTH - 1 < $pos" | $BC) )); then
         END_POS=$pos
         break
@@ -30,11 +54,12 @@ done
 mkdir -p "$(dirname $OUTPUT_FILE)"
 
 if [[ ! -z $START_POS && ! -z $END_POS ]]; then
-    START_POS="$(echo "$START_POS + 1.0" | $BC)"
+    START_POS="$(echo "$START_POS - 1.0" | $BC)"
     END_POS="$(echo "$END_POS + 1.0" | $BC)"
     EXTRACTING_LENGTH=$(echo "$END_POS - $START_POS" | $BC)
     echo "EXTRACT START_POS: $START_POS"
     echo "EXTRACT END_POS: $END_POS"
     echo "EXTRACT EXTRACTING_LENGTH: $EXTRACTING_LENGTH"
+    echo
     $FFMPEG -ss "$START_POS" -t "$EXTRACTING_LENGTH" -i "$RAW_FILE" -c copy "$OUTPUT_FILE"
 fi
