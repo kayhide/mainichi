@@ -21,45 +21,40 @@ function finish {
 }
 trap finish EXIT
 
-$FFMPEG -i "$RAW_FILE" -af silencedetect=noise=-60dB:2.0 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_" > "$GAPS_FILE"
-GAP_STARTS=$(cat "$GAPS_FILE" | grep "silence_start:" | sed -e "s/.*: *//")
-GAP_ENDS=$(cat "$GAPS_FILE" | grep "silence_end:" | sed -e "s/ *|.*//" | sed -e "s/.*: *//")
+$FFMPEG -i "$RAW_FILE" -af silencedetect=noise=-60dB:1.5 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_end" > "$GAPS_FILE"
+
+start_pos=""
+end_pos=""
 
 echo "Gaps are detected:"
-echo "starts:"
-echo "$GAP_STARTS"
-echo
-echo "ends:"
-echo "$GAP_ENDS"
-echo
-
-START_POS=""
-END_POS=""
-
-for pos in ${GAP_ENDS[@]}; do
-    if (( $(echo "$OFFSET < $pos" | $BC) )); then
-        START_POS=$pos
-        break
+while read line; do
+    gap_end=$(echo $line | sed -e "s/.* silence_end: \([0-9\.]*\).*/\1/")
+    gap_duration=$(echo $line | sed -e "s/.* silence_duration: \([0-9\.]*\).*/\1/")
+    gap_start=$(echo "$gap_end - $gap_duration" | $BC)
+    if [[ -z $start_pos ]] && (( $(echo "$OFFSET < $gap_end" | $BC) )); then
+        start_pos=$gap_end
+        echo -n "* "
+    elif [[ -z $end_pos ]] && (( $(echo "$start_pos + $LENGTH - 3 < $gap_start" | $BC) )); then
+        end_pos=$gap_start
+        echo -n "* "
+    else
+        echo -n "  "
     fi
-done
-
-for pos in ${GAP_STARTS[@]}; do
-    if (( $(echo "$START_POS + $LENGTH - 1 < $pos" | $BC) )); then
-        END_POS=$pos
-        break
-    fi
-done
+    echo "$gap_start - $gap_end ($gap_duration)"
+done < "$GAPS_FILE"
+echo
 
 
 mkdir -p "$(dirname $OUTPUT_FILE)"
+[[ -e "$OUTPUT_FILE" ]] && rm "$OUTPUT_FILE"
 
-if [[ ! -z $START_POS && ! -z $END_POS ]]; then
-    START_POS="$(echo "$START_POS - 1.0" | $BC)"
-    END_POS="$(echo "$END_POS + 1.0" | $BC)"
-    EXTRACTING_LENGTH=$(echo "$END_POS - $START_POS" | $BC)
-    echo "EXTRACT START_POS: $START_POS"
-    echo "EXTRACT END_POS: $END_POS"
+if [[ ! -z $start_pos && ! -z $end_pos ]]; then
+    start_pos="$(echo "$start_pos - 1.0" | $BC)"
+    end_pos="$(echo "$end_pos + 1.0" | $BC)"
+    EXTRACTING_LENGTH=$(echo "$end_pos - $start_pos" | $BC)
+    echo "EXTRACT start_pos: $start_pos"
+    echo "EXTRACT end_pos: $end_pos"
     echo "EXTRACT EXTRACTING_LENGTH: $EXTRACTING_LENGTH"
     echo
-    $FFMPEG -ss "$START_POS" -t "$EXTRACTING_LENGTH" -i "$RAW_FILE" -c copy "$OUTPUT_FILE"
+    $FFMPEG -ss "$start_pos" -t "$EXTRACTING_LENGTH" -i "$RAW_FILE" -c copy "$OUTPUT_FILE"
 fi
