@@ -6,55 +6,68 @@ export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
 FFMPEG="ffmpeg"
 BC="bc"
 
-RAW_FILE="$1"
-OUTPUT_FILE="$2"
-LENGTH="${3:-900}"
-OFFSET="${4:-45}"
+GAP_MIN=1.2
 
-mkdir -p tmp
-GAPS_FILE=$(mktemp "tmp/${0##*/}-gaps.XXXX")
-function finish {
-    if [[ -e "$GAPS_FILE" ]]; then
-        echo "Deleting $GAPS_FILE"
-        rm -f "$GAPS_FILE"
+detect_gaps() {
+    $FFMPEG -i "$1" -af silencedetect=noise=-60dB:$GAP_MIN -f null - 2>&1 | \
+        grep "\\[silencedetect.*\\] *silence_end" | \
+        while read -r line; do
+            gap_end=$(echo $line | sed -e "s/.* silence_end: \([0-9\.]*\).*/\1/")
+            gap_duration=$(echo $line | sed -e "s/.* silence_duration: \([0-9\.]*\).*/\1/")
+            gap_start=$(echo "$gap_end - $gap_duration" | $BC)
+            echo "$gap_start $gap_end $gap_duration"
+        done
+}
+
+main() {
+    local raw_file="$1"
+    local output_file="$2"
+    local length="${3:-900}"
+    local offset="${4:-45}"
+
+
+    local start_pos=""
+    local end_pos=""
+
+    echo "Gaps are detected:"
+    while read -r -a line; do
+        local gap_start=${line[0]}
+        local gap_end=${line[1]}
+        local gap_duration=${line[2]}
+        local using=false
+        if [[ -z $start_pos ]]; then
+            if (( $($BC <<< "$offset < $gap_end") )); then
+                start_pos=$gap_end
+                using=true
+            fi
+        elif [[ -z $end_pos ]]; then
+            if (( $($BC <<< "$start_pos + $length - 3 < $gap_start") )); then
+                end_pos=$gap_start
+                using=true
+            fi
+        fi
+        $using && echo -n "* " || echo -n "  "
+        echo "$gap_start - $gap_end ($gap_duration)"
+    done < <(detect_gaps "$raw_file")
+    echo
+
+    mkdir -p "$(dirname $output_file)"
+    [[ -e "$output_file" ]] && rm "$output_file"
+
+    if [[ ! -z $start_pos && ! -z $end_pos ]]; then
+        start_pos="$(echo "$start_pos - 1.0" | $BC)"
+        end_pos="$(echo "$end_pos + 1.0" | $BC)"
+        extracting_length=$(echo "$end_pos - $start_pos" | $BC)
+        echo "EXTRACT start_pos: $start_pos"
+        echo "EXTRACT end_pos: $end_pos"
+        echo "EXTRACT extracting_length: $extracting_length"
+        echo
+        $FFMPEG -ss "$start_pos" -t "$extracting_length" -i "$raw_file" -c copy "$output_file"
+        echo "OK $output_file"
+    else
+        echo "No range found fits $length secs."
+        exit 1
     fi
 }
-trap finish EXIT
 
-$FFMPEG -i "$RAW_FILE" -af silencedetect=noise=-60dB:1.5 -f null - 2>&1 | grep "\\[silencedetect.*\\] *silence_end" > "$GAPS_FILE"
-
-start_pos=""
-end_pos=""
-
-echo "Gaps are detected:"
-while read line; do
-    gap_end=$(echo $line | sed -e "s/.* silence_end: \([0-9\.]*\).*/\1/")
-    gap_duration=$(echo $line | sed -e "s/.* silence_duration: \([0-9\.]*\).*/\1/")
-    gap_start=$(echo "$gap_end - $gap_duration" | $BC)
-    if [[ -z $start_pos ]] && (( $(echo "$OFFSET < $gap_end" | $BC) )); then
-        start_pos=$gap_end
-        echo -n "* "
-    elif [[ -z $end_pos ]] && (( $(echo "$start_pos + $LENGTH - 3 < $gap_start" | $BC) )); then
-        end_pos=$gap_start
-        echo -n "* "
-    else
-        echo -n "  "
-    fi
-    echo "$gap_start - $gap_end ($gap_duration)"
-done < "$GAPS_FILE"
-echo
-
-
-mkdir -p "$(dirname $OUTPUT_FILE)"
-[[ -e "$OUTPUT_FILE" ]] && rm "$OUTPUT_FILE"
-
-if [[ ! -z $start_pos && ! -z $end_pos ]]; then
-    start_pos="$(echo "$start_pos - 1.0" | $BC)"
-    end_pos="$(echo "$end_pos + 1.0" | $BC)"
-    EXTRACTING_LENGTH=$(echo "$end_pos - $start_pos" | $BC)
-    echo "EXTRACT start_pos: $start_pos"
-    echo "EXTRACT end_pos: $end_pos"
-    echo "EXTRACT EXTRACTING_LENGTH: $EXTRACTING_LENGTH"
-    echo
-    $FFMPEG -ss "$start_pos" -t "$EXTRACTING_LENGTH" -i "$RAW_FILE" -c copy "$OUTPUT_FILE"
-fi
+main "$@"
